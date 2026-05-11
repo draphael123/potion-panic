@@ -872,6 +872,7 @@ const ACHIEVEMENTS = [
   { id: 'no_explosions',  name: 'Careful Brewer',      desc: 'Complete a run with 0 explosions',  icon: 'O' },
   { id: 'tip_master',     name: 'Tip Master',          desc: 'Earn 10 tips in one run',           icon: '$' },
   { id: 'vip_5',          name: 'VIP Treatment',       desc: 'Serve 5 VIP customers in one run',  icon: 'V' },
+  { id: 'vip_5',          name: 'VIP Treatment',       desc: 'Serve 5 VIP customers in one run',  icon: 'V' },
   { id: 'wave_25',        name: 'Endless Explorer',    desc: 'Reach wave 25 in endless mode',     icon: 'E' },
   { id: 'gold_500',       name: 'Rich Brewer',         desc: 'Earn 500 gold in a single run',     icon: 'G' },
   { id: 'potion_master',  name: 'Potion Master',       desc: 'Beat all 20 waves',                 icon: 'P' },
@@ -934,31 +935,41 @@ function startTransition(callback, duration) {
 
 // === UPGRADE SHOP ===
 const UPGRADES = [
-  { id: 'brew_speed',   name: 'Quick Brew',       desc: 'Brew 30% faster',               cost: 25,  icon: '~',  maxLevel: 3 },
-  { id: 'extra_heart',  name: 'Extra Heart',       desc: '+1 heart NEXT wave only',       cost: 30,  icon: '+',  maxLevel: 99, consumable: true },
-  { id: 'patience',     name: 'Calming Aura',      desc: 'Customers 15% more patient',    cost: 30,  icon: '*',  maxLevel: 3 },
-  { id: 'gold_boost',   name: 'Golden Touch',      desc: '+20% gold from potions',        cost: 20,  icon: '$',  maxLevel: 3 },
+  // === KEPT UPGRADES (gameplay-changing) ===
   { id: 'auto_hint',    name: 'Recipe Whisper',     desc: 'Highlights needed ingredients', cost: 40,  icon: '?',  maxLevel: 1 },
-  { id: 'combo_extend', name: 'Combo Master',       desc: 'Combo window +2 seconds',      cost: 25,  icon: 'x',  maxLevel: 2 },
   { id: 'speed_potion', name: 'Time Freeze',        desc: 'Pause patience 2s after brew',  cost: 35,  icon: '#',  maxLevel: 2 },
-  { id: 'loyalty',      name: 'Loyalty Card',       desc: 'Returning ailment types +15% gold', cost: 20, icon: 'L', maxLevel: 2 },
   { id: 'apprentice',   name: 'Apprentice',         desc: 'Auto-clears wrong potions',     cost: 35,  icon: 'A',  maxLevel: 1 },
   { id: 'lucky_charm',  name: 'Lucky Charm',        desc: '10% chance to cure any ailment',cost: 45,  icon: '!',  maxLevel: 1 },
-  { id: 'bulk_discount',name: 'Bulk Discount',      desc: 'All upgrades 15% cheaper',      cost: 30,  icon: '%',  maxLevel: 2 },
   { id: 'foresight',    name: 'Foresight',          desc: 'Preview next wave ailments',    cost: 35,  icon: 'E',  maxLevel: 1 },
   { id: 'assistant',    name: 'Hire Assistant',      desc: 'Auto-brews for 1 customer/wave',cost: 120, icon: '@',  maxLevel: 3 },
   { id: 'big_cauldron', name: 'Big Cauldron',        desc: '+1 ingredient slot (max 6)',     cost: 60,  icon: 'O',  maxLevel: 2 },
-  { id: 'enchanted',    name: 'Enchanted Cauldron',  desc: "Order doesn't matter",           cost: 80,  icon: 'E',  maxLevel: 1 },
+  { id: 'enchanted',    name: 'Enchanted Cauldron',  desc: "Order doesn't matter",           cost: 80,  icon: 'e',  maxLevel: 1 },
   { id: 'chaos_brewer', name: 'Chaos Brewer',        desc: 'Wild potion chance +10%',        cost: 40,  icon: '~',  maxLevel: 2 },
+  // === NEW UPGRADES (gameplay-changing) ===
+  { id: 'potion_memory',    name: 'Potion Memory',       desc: 'Press M to repeat last recipe',      cost: 50,  icon: 'M',  maxLevel: 1 },
+  { id: 'splash_cure',      name: 'Splash Cure',         desc: 'Serving fills adjacent patience +3s',cost: 45,  icon: 'S',  maxLevel: 2 },
+  { id: 'ingredient_magnet',name: 'Ingredient Magnet',   desc: 'Auto-adds next recipe ingredient',   cost: 55,  icon: '>',  maxLevel: 1 },
+  { id: 'rush_mode',        name: 'Rush Mode',           desc: 'Toggle: 2x speed, 2x gold per wave', cost: 60,  icon: 'R',  maxLevel: 1 },
+  { id: 'potion_recycler',  name: 'Potion Recycler',     desc: 'Bad brews return 1 ingredient',      cost: 35,  icon: 'r',  maxLevel: 2 },
+  { id: 'customer_whisperer',name:'Customer Whisperer',   desc: 'Bubbles show exact recipe',          cost: 65,  icon: 'W',  maxLevel: 1 },
+  { id: 'overflow_vial',    name: 'Overflow Vial',       desc: 'Store 1 extra potion for later',     cost: 70,  icon: 'V',  maxLevel: 2 },
+  { id: 'tip_jar',          name: 'Tip Jar',             desc: '+10% generous customer chance',       cost: 30,  icon: '$',  maxLevel: 3 },
 ];
-let upgradeLevels = {}; // { brew_speed: 1, ... } per run
+let upgradeLevels = {}; // { auto_hint: 1, ... } per run
 let shopScrollY = 0;
-let extraHeartNextWave = 0; // consumable extra hearts for next wave
 let assistantTarget = null; // customer the assistant is currently working on
 let assistantBrewTimer = 0; // countdown to auto-serve
 let assistantServesLeft = 0; // how many auto-serves remain this wave
 let servedAilments = {}; // track ailment types served this wave for loyalty
 let patienceFreezeTimer = 0; // time freeze after successful brew
+// New upgrade state
+let lastBrewedRecipe = []; // for Potion Memory
+let magnetTimer = 0; // for Ingredient Magnet auto-add delay
+let magnetTarget = null; // ingredient ID to auto-add
+let rushModeActive = false; // for Rush Mode toggle
+let overflowVials = []; // stored potions for Overflow Vial [{ailmentId, color, matchData}]
+let recycledIngredient = null; // ingredient returned by Potion Recycler
+let recycledTimer = 0; // visual timer for recycled ingredient highlight
 
 // === ATMOSPHERE SYSTEM ===
 function getAtmosphere(w) {
@@ -1001,10 +1012,9 @@ function saveHighScores() {
 function saveGameState() {
   try {
     const save = {
-      version: 9,
+      version: 10,
       score, gold, wave, selectedDifficulty,
       upgradeLevels: {...upgradeLevels},
-      extraHeartNextWave,
       reputation,
       runStats: {...runStats},
       timestamp: Date.now(),
@@ -1017,7 +1027,7 @@ function loadGameState() {
     const data = localStorage.getItem('potionPanic_saveGame');
     if (!data) return null;
     const save = JSON.parse(data);
-    if (!save || save.version !== 9) { clearSaveGame(); return null; }
+    if (!save || save.version !== 10) { clearSaveGame(); return null; }
     // Expire saves older than 7 days
     if (Date.now() - save.timestamp > 7 * 24 * 60 * 60 * 1000) { clearSaveGame(); return null; }
     return save;
@@ -1033,7 +1043,6 @@ function resumeGame(save) {
   gold = save.gold;
   wave = save.wave;
   upgradeLevels = save.upgradeLevels || {};
-  extraHeartNextWave = save.extraHeartNextWave || 0;
   reputation = save.reputation || 1.0;
   runStats = save.runStats || { totalServed:0, totalGold:0, maxCombo:0, maxWave:0, perfectWaves:0, rareServed:0, maxRep:1, waveLivesLost:0 };
   // Reset per-wave state
@@ -1057,6 +1066,12 @@ function resumeGame(save) {
   assistantBrewerChar = { x: CAULDRON_X-40, y: COUNTER_Y+20, homeX: CAULDRON_X-40, state:'idle', target:null, potion:null, speed:150, deliverTimer:0, deliveriesLeft:0, walkFrame:0, fatigue:0 };
   vipSpawnedThisWave = false;
   upcomingCustomers = [];
+  // New upgrade state resets for resume
+  lastBrewedRecipe = [];
+  magnetTimer = 0; magnetTarget = null;
+  rushModeActive = false;
+  overflowVials = [];
+  recycledIngredient = null; recycledTimer = 0;
   // Feature 1-4 resets for resume
   merchant = null;
   merchantCooldown = 0;
@@ -1170,10 +1185,9 @@ function createCustomer() {
   if (slot === -1) return null;
 
   const basePat = Math.max(6, (14 - wave * 0.8) * 1.5); // 1.5x patience for delivery walk time
-  const patienceUpgrade = 1 + (upgradeLevels.patience || 0) * 0.15;
   const modPatienceMult = currentModifier && currentModifier.patienceMult ? currentModifier.patienceMult : 1.0;
   const repBonus = reputation >= 2.5 ? 1.15 : reputation >= 2.0 ? 1.1 : reputation >= 1.5 ? 1.05 : 1.0;
-  let patience = (basePat + Math.random() * 3) * diffConfig.patienceMult * patienceUpgrade * modPatienceMult * repBonus;
+  let patience = (basePat + Math.random() * 3) * diffConfig.patienceMult * modPatienceMult * repBonus;
 
   // Rare customer (VIP) chance
   const rareChance = Math.min(0.15, 0.05 + wave * 0.005);
@@ -1181,9 +1195,10 @@ function createCustomer() {
   const isRare = Math.random() < (rareChance + repRareBoost) && (ailment.tier || 1) >= 2;
   const baseGold = ailment.recipe.length * 5 + wave;
 
-  // Personality types (~25% chance total)
+  // Personality types — Tip Jar increases generous chance
+  const tipJarBonus = (upgradeLevels.tip_jar || 0) * 0.10;
   let personality = null;
-  if (Math.random() < 0.08) personality = 'generous';
+  if (Math.random() < 0.08 + tipJarBonus) personality = 'generous';
   else if (Math.random() < 0.08) personality = 'panicky';
   else if (Math.random() < 0.08) personality = 'contagious';
 
@@ -1249,8 +1264,7 @@ function spawnVIP() {
   if (slot === -1) return null;
 
   const basePat = Math.max(6, (14 - wave * 0.8) * 1.5);
-  const patienceUpgrade = 1 + (upgradeLevels.patience || 0) * 0.15;
-  let patience = (basePat + Math.random() * 3) * diffConfig.patienceMult * patienceUpgrade * 0.4; // 40% normal patience
+  let patience = (basePat + Math.random() * 3) * diffConfig.patienceMult * 0.4; // 40% normal patience
   const baseGold = (ailment.recipe.length * 5 + wave) * 3; // 3x gold
 
   const vipCustomer = {
@@ -1303,8 +1317,10 @@ function spawnVIP() {
 // === WAVE MANAGEMENT ===
 function startWave(n) {
   wave = n;
-  lives = LIVES_PER_WAVE + extraHeartNextWave;
-  extraHeartNextWave = 0;
+  lives = LIVES_PER_WAVE;
+
+  // Rush Mode: if active, double customer speed (handled in update loop)
+  rushModeActive = upgradeLevels.rush_mode ? rushModeActive : false;
 
   const assistLvl = upgradeLevels.assistant || 0;
   assistantServesLeft = assistLvl;
@@ -1329,6 +1345,8 @@ function startWave(n) {
   servedAilments = {};
   patienceFreezeTimer = 0;
   undoStack = [];
+  magnetTimer = 0; magnetTarget = null;
+  recycledIngredient = null; recycledTimer = 0;
   runStats.waveLivesLost = 0;
 
   // Merchant resets (Feature 1)
@@ -1412,9 +1430,7 @@ function startWave(n) {
 }
 
 function getUpgradeCost(up) {
-  const base = up.cost;
-  const discountMult = 1 - (upgradeLevels.bulk_discount || 0) * 0.15;
-  return Math.max(5, Math.floor(base * discountMult));
+  return up.cost;
 }
 
 function openShop() {
@@ -1547,8 +1563,6 @@ function executeServe(customer, brewData) {
   const reward = customer.goldReward;
 
   servedAilments[customer.ailment.id] = (servedAilments[customer.ailment.id] || 0) + 1;
-  const loyaltyMult = (upgradeLevels.loyalty || 0) > 0 && servedAilments[customer.ailment.id] > 1
-    ? 1 + (upgradeLevels.loyalty) * 0.15 : 1;
 
   const speedBonus = customer.patience / customer.maxPatience;
   reputation = Math.min(3.0, reputation + 0.05 + speedBonus * 0.1);
@@ -1557,17 +1571,31 @@ function executeServe(customer, brewData) {
 
   comboCount++;
   runStats.maxCombo = Math.max(runStats.maxCombo, comboCount);
-  const comboExtend = (upgradeLevels.combo_extend || 0) * 2;
-  comboTimer = 3 + comboExtend;
+  comboTimer = 3;
   const comboBonus = comboCount > 1 ? comboCount * 5 : 0;
   const modGoldMult = currentModifier && currentModifier.goldMult ? currentModifier.goldMult : 1.0;
   const inspectorMult = (microEvent && microEvent.type === 'inspector' && microEvent.data.triggered && microEvent.timer > 0) ? 1.5 : 1.0;
   const cauldronSnap = brewData.cauldronSnapshot || [];
   const ingredientBonusMult = (microEvent && microEvent.type === 'ingredient_bonus' && microEvent.data.triggered && microEvent.timer > 0 && cauldronSnap.includes(microEvent.data.ingredientId)) ? 1.3 : 1.0;
-  // Double-down and merchant gold multipliers (Features 1 & 4)
   const ddMult = (doubleDown && brewData.doubleDownActive) ? 2.0 : 1.0;
   const mGoldMult2 = merchantGoldMult;
-  const goldMult = (1 + (upgradeLevels.gold_boost || 0) * 0.2) * loyaltyMult * reputation * rushHourBonusMult * modGoldMult * inspectorMult * ingredientBonusMult * ddMult * mGoldMult2;
+  const rushModeMult = rushModeActive ? 2.0 : 1.0;
+  const goldMult = reputation * rushHourBonusMult * modGoldMult * inspectorMult * ingredientBonusMult * ddMult * mGoldMult2 * rushModeMult;
+
+  // Splash Cure: filling adjacent customers' patience
+  if (upgradeLevels.splash_cure) {
+    const splashAmount = 3 * (upgradeLevels.splash_cure);
+    const slot = customer.slot;
+    for (const c of customers) {
+      if (c !== customer && !c.served && !c.leaving && !c.dying && Math.abs(c.slot - slot) <= 1) {
+        c.patience = Math.min(c.maxPatience, c.patience + splashAmount);
+        floatTexts.push({ x: c.x+15, y: c.y-10, text: '+' + splashAmount + 's', life: 0.8, color: '#44ddff' });
+        for (let i = 0; i < 4; i++) {
+          particles.push({ x: c.x+15+(Math.random()-0.5)*20, y: c.y+10, vx:(Math.random()-0.5)*2, vy:-Math.random()*2-1, life:0.5, color:'#44ddff', size:2+Math.random()*2 });
+        }
+      }
+    }
+  }
   let totalReward = Math.floor((reward + comboBonus) * goldMult);
   // Decrement merchant gold uses
   if (merchantGoldMult > 1 && merchantGoldUses > 0) {
@@ -1701,7 +1729,7 @@ function executeServe(customer, brewData) {
   if (tipAmount > 0) { runTipCount++; if (runTipCount >= 10) unlockAchievement('tip_master'); }
   if (currentModifier && currentModifier.brewCooldown) brewCooldownTimer = currentModifier.brewCooldown;
 
-  const brewDelay = Math.max(200, 600 - (upgradeLevels.brew_speed || 0) * 120);
+  const brewDelay = 600;
   setTimeout(() => { customers = customers.filter(c => c !== customer); }, brewDelay);
 }
 
@@ -1971,6 +1999,7 @@ function tryCauldronBrew() {
           life: 0.8, color: P.SUCCESS, size: 3 + Math.random()*3,
         });
       }
+      lastBrewedRecipe = [...cauldron]; // Potion Memory
       cauldron = []; undoStack = [];
       if (currentModifier && currentModifier.brewCooldown) brewCooldownTimer = currentModifier.brewCooldown;
       brewFlash = 0.3;
@@ -1998,6 +2027,7 @@ function tryCauldronBrew() {
           life: 0.8, color: P.SUCCESS, size: 3 + Math.random()*3,
         });
       }
+      lastBrewedRecipe = [...cauldron]; // Potion Memory
       cauldron = []; undoStack = [];
       if (currentModifier && currentModifier.brewCooldown) brewCooldownTimer = currentModifier.brewCooldown;
       brewFlash = 0.3;
@@ -2025,6 +2055,22 @@ function tryCauldronBrew() {
       if (currentModifier && currentModifier.brewCooldown) brewCooldownTimer = currentModifier.brewCooldown;
       brewFlash = 0.2;
 
+    } else if (upgradeLevels.overflow_vial && overflowVials.length < (upgradeLevels.overflow_vial || 0)) {
+      // Overflow Vial: store the potion for later
+      overflowVials.push({ ailmentId: match.id, color: match.color, name: match.name });
+      playSound('brew_good');
+      floatTexts.push({ x: CAULDRON_X+CAULDRON_W/2, y: CAULDRON_Y-30, text: 'STORED!', life: 1.5, color: '#aa88ff' });
+      for (let i = 0; i < 6; i++) {
+        particles.push({
+          x: CAULDRON_X + CAULDRON_W/2 + (Math.random()-0.5)*30, y: CAULDRON_Y,
+          vx: (Math.random()-0.5)*2, vy: -Math.random()*3 - 1,
+          life: 0.7, color: '#aa88ff', size: 2 + Math.random()*3,
+        });
+      }
+      lastBrewedRecipe = [...cauldron];
+      cauldron = []; undoStack = [];
+      if (currentModifier && currentModifier.brewCooldown) brewCooldownTimer = currentModifier.brewCooldown;
+      brewFlash = 0.2;
     } else {
       floatTexts.push({ x: CAULDRON_X+CAULDRON_W/2, y: CAULDRON_Y-20, text: 'No patient!', life: 1.5, color: P.DANGER });
       playSound('brew_bad'); brewFlash = 0.2; shakeTimer = 0.15; shakeIntensity = 3;
@@ -2128,6 +2174,20 @@ function tryCauldronBrew() {
       }
       if (comboShieldTimer <= 0) comboCount = 0;
     }
+  }
+  // Potion Recycler: return 1 ingredient on bad brew (not explosions or wild)
+  if (upgradeLevels.potion_recycler && cauldron.length > 0 && !match) {
+    const returnCount = Math.min(upgradeLevels.potion_recycler, cauldron.length);
+    const returned = cauldron.slice(0, returnCount);
+    recycledIngredient = returned[0];
+    recycledTimer = 2.0;
+    floatTexts.push({ x: CAULDRON_X+CAULDRON_W/2, y: CAULDRON_Y+30, text: 'Recycled ' + returnCount + '!', life: 1.2, color: '#44ff88' });
+    // Auto-add recycled ingredient back to cauldron after clearing
+    setTimeout(() => {
+      if (cauldron.length < maxCauldronSlots) {
+        for (const ing of returned) cauldron.push(ing);
+      }
+    }, 100);
   }
   cauldron = []; undoStack = [];
 }
@@ -3456,6 +3516,18 @@ function drawCustomer(c) {
     // Ailment name
     ctx.fillStyle = P.TEXT_DARK; ctx.font = 'bold 8px monospace'; ctx.textAlign = 'left';
     ctx.fillText(c.ailment.name, bx + 22, by + 17);
+    // Customer Whisperer: show exact recipe ingredients below name
+    if (upgradeLevels.customer_whisperer) {
+      const recipe = c.ailment.recipe;
+      for (let ri = 0; ri < recipe.length; ri++) {
+        const ing = INGREDIENTS.find(ig => ig.id === recipe[ri]);
+        if (ing) {
+          ctx.fillStyle = ing.color;
+          ctx.font = 'bold 7px monospace';
+          ctx.fillText(ing.symbol, bx + 22 + ri * 10, by + 26);
+        }
+      }
+    }
     ctx.textAlign = 'center';
 
     // Patience bar with gradient color
@@ -4250,6 +4322,27 @@ function drawHUD() {
     ctx.textAlign = 'left'; ctx.globalAlpha = 1;
   }
 
+  // Rush Mode indicator
+  if (rushModeActive) {
+    ctx.save();
+    ctx.fillStyle = '#ff4444'; ctx.globalAlpha = 0.7 + Math.sin(gameTime*6)*0.3;
+    ctx.font = 'bold 10px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('RUSH MODE x2', W/2, 42);
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+
+  // Overflow Vial display
+  if (upgradeLevels.overflow_vial && overflowVials.length > 0) {
+    ctx.fillStyle = P.PARCHMENT; ctx.font = '7px monospace'; ctx.textAlign = 'right';
+    ctx.fillText('VIALS:', W - 10, 55);
+    for (let vi = 0; vi < overflowVials.length; vi++) {
+      ctx.fillStyle = overflowVials[vi].color;
+      ctx.beginPath(); ctx.arc(W - 8 - vi * 14, 62, 4, 0, Math.PI*2); ctx.fill();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 0.5; ctx.stroke();
+    }
+  }
+
   // Reputation meter
   const repBarX = 15, repBarY = 58, repBarW = 80, repBarH = 8;
   ctx.fillStyle = '#333'; ctx.fillRect(repBarX, repBarY, repBarW, repBarH);
@@ -4267,7 +4360,7 @@ function drawHUD() {
   }
 
   // Lives (3 base per wave + any extra hearts from consumable)
-  const maxLives = Math.max(lives, LIVES_PER_WAVE + extraHeartNextWave);
+  const maxLives = Math.max(lives, LIVES_PER_WAVE);
   for (let i = 0; i < maxLives; i++) {
     const hx = W - 30 - (maxLives - i) * 25;
     if (i < lives) drawHeart(hx, 12, 10, P.HEART);
@@ -4504,8 +4597,7 @@ function drawShop() {
   // Hearts remaining
   ctx.fillStyle = P.WHITE; ctx.font = '11px monospace';
   const heartsText = `Hearts: ${lives}/${LIVES_PER_WAVE}`;
-  const extraText = extraHeartNextWave > 0 ? `  (+${extraHeartNextWave} next wave)` : '';
-  ctx.fillText(heartsText + extraText, W/2, 76);
+  ctx.fillText(heartsText, W/2, 76);
 
   // Foresight: preview next wave ailments — BUGFIX: show only what's new or notable
   if (upgradeLevels.foresight) {
@@ -4535,8 +4627,8 @@ function drawShop() {
     // Skip if off-screen
     if (cy + lay.cardH < 96 || cy > lay.btnY - 6) return;
 
-    const level = up.consumable ? (extraHeartNextWave || 0) : (upgradeLevels[up.id] || 0);
-    const maxed = !up.consumable && level >= up.maxLevel;
+    const level = upgradeLevels[up.id] || 0;
+    const maxed = level >= up.maxLevel;
     const cost = getUpgradeCost(up);
     const canAfford = gold >= cost && !maxed;
     const isHover = hoverBtn === `shop_${up.id}`;
@@ -4567,21 +4659,15 @@ function drawShop() {
     }
     ctx.fillText(desc, cx + 44, cy + 32);
 
-    // Level pips (compact) — skip for consumables
-    if (!up.consumable) {
-      const maxPips = Math.min(up.maxLevel, 5);
-      for (let l = 0; l < maxPips; l++) {
-        ctx.fillStyle = l < level ? P.SHOP_GOLD : '#444';
-        ctx.beginPath(); ctx.arc(cx + 44 + l * 11, cy + 47, 3, 0, Math.PI*2); ctx.fill();
-      }
-      if (up.maxLevel > 5) {
-        ctx.fillStyle = P.PARCHMENT; ctx.font = '8px monospace'; ctx.textAlign = 'left';
-        ctx.fillText(`${level}/${up.maxLevel}`, cx + 44 + maxPips * 11, cy + 50);
-      }
-    } else {
-      // Show consumable count
-      ctx.fillStyle = P.POTION_GLO; ctx.font = '9px monospace'; ctx.textAlign = 'left';
-      ctx.fillText(`Queued: ${extraHeartNextWave}`, cx + 44, cy + 48);
+    // Level pips (compact)
+    const maxPips = Math.min(up.maxLevel, 5);
+    for (let l = 0; l < maxPips; l++) {
+      ctx.fillStyle = l < level ? P.SHOP_GOLD : '#444';
+      ctx.beginPath(); ctx.arc(cx + 44 + l * 11, cy + 47, 3, 0, Math.PI*2); ctx.fill();
+    }
+    if (up.maxLevel > 5) {
+      ctx.fillStyle = P.PARCHMENT; ctx.font = '8px monospace'; ctx.textAlign = 'left';
+      ctx.fillText(`${level}/${up.maxLevel}`, cx + 44 + maxPips * 11, cy + 50);
     }
 
     // Cost or MAXED
@@ -4711,8 +4797,7 @@ function drawTitle() {
     // Word wrap description
     const words = d.desc.split(' ');
     let line1 = '', line2 = '';
-    for (const w of words) {
-      if (ctx.measureText(line1 + ' ' + w).width < btnW - 16) line1 += (line1 ? ' ' : '') + w;
+    for (const w of words) {      if (ctx.measureText(line1 + ' ' + w).width < btnW - 16) line1 += (line1 ? ' ' : '') + w;
       else line2 += (line2 ? ' ' : '') + w;
     }
     ctx.fillText(line1, bx + btnW/2, by + 45);
@@ -5302,20 +5387,12 @@ canvas.addEventListener('click', (e) => {
       if (cyS + lay.cardH < 96 || cyS > lay.btnY - 6) return; // off-screen
       if (mx >= cxS && mx <= cxS+lay.cardW && my >= cyS && my <= cyS+lay.cardH) {
         const cost = getUpgradeCost(up);
-        if (up.consumable) {
-          // Consumable: Extra Heart
-          if (gold < cost) { playSound('shop_deny'); return; }
-          gold -= cost;
-          extraHeartNextWave++;
-          playSound('shop_buy');
-        } else {
-          const level = upgradeLevels[up.id] || 0;
-          if (level >= up.maxLevel) { playSound('shop_deny'); return; }
-          if (gold < cost) { playSound('shop_deny'); return; }
-          gold -= cost;
-          upgradeLevels[up.id] = level + 1;
-          playSound('shop_buy');
-        }
+        const level = upgradeLevels[up.id] || 0;
+        if (level >= up.maxLevel) { playSound('shop_deny'); return; }
+        if (gold < cost) { playSound('shop_deny'); return; }
+        gold -= cost;
+        upgradeLevels[up.id] = level + 1;
+        playSound('shop_buy');
       }
     });
     // Continue button
@@ -5552,6 +5629,20 @@ document.addEventListener('keydown', (e) => {
     if (e.key in keyMap && keyMap[e.key] < avail.length) {
       if (cauldron.length < maxCauldronSlots) {
         initAudio(); undoStack.push([...cauldron]); cauldron.push(avail[keyMap[e.key]].id); playSound('add_' + avail[keyMap[e.key]].id);
+        // Ingredient Magnet: queue next recipe ingredient
+        if (upgradeLevels.ingredient_magnet && cauldron.length < maxCauldronSlots) {
+          // Find a customer whose recipe starts with current cauldron contents
+          const waitingC = customers.find(cc => cc.arrived && !cc.served && !cc.leaving && !cc.dying && cc.ailment);
+          if (waitingC) {
+            const recipe = waitingC.ailment.recipe;
+            const nextIdx = cauldron.length; // next ingredient needed
+            if (nextIdx < recipe.length) {
+              const nextIng = recipe[nextIdx];
+              const isAvail = avail.some(a => a.id === nextIng);
+              if (isAvail) { magnetTarget = nextIng; magnetTimer = 0.3; }
+            }
+          }
+        }
       }
     }
     if (e.key === ' ' || e.key === 'Enter') {
@@ -5564,6 +5655,21 @@ document.addEventListener('keydown', (e) => {
     }
     if (e.key === 'z' || e.key === 'Z') {
       if (undoStack.length > 0) { cauldron = undoStack.pop(); initAudio(); playSound('undo'); }
+    }
+    // Potion Memory: M key replays last brewed recipe
+    if ((e.key === 'm' || e.key === 'M') && upgradeLevels.potion_memory && lastBrewedRecipe.length > 0) {
+      initAudio();
+      undoStack.push([...cauldron]);
+      cauldron = lastBrewedRecipe.slice(0, maxCauldronSlots);
+      playSound('click');
+      floatTexts.push({ x: CAULDRON_X+CAULDRON_W/2, y: CAULDRON_Y-10, text: 'MEMORY!', life: 1.0, color: '#aaddff' });
+    }
+    // Rush Mode: R key toggles rush mode
+    if ((e.key === 'r') && upgradeLevels.rush_mode) {
+      initAudio();
+      rushModeActive = !rushModeActive;
+      playSound('click');
+      floatTexts.push({ x: CAULDRON_X+CAULDRON_W/2, y: CAULDRON_Y-20, text: rushModeActive ? 'RUSH ON!' : 'RUSH OFF', life: 1.0, color: rushModeActive ? '#ff4444' : '#aaaaaa' });
     }
   }
   if (state === 'title') {
@@ -5623,7 +5729,11 @@ function startGame() {
   brewFlash = 0;
   warningCooldowns = {};
   upgradeLevels = {};
-  extraHeartNextWave = 0;
+  lastBrewedRecipe = [];
+  magnetTimer = 0; magnetTarget = null;
+  rushModeActive = false;
+  overflowVials = [];
+  recycledIngredient = null; recycledTimer = 0;
   assistantTarget = null;
   assistantBrewTimer = 0;
   assistantServesLeft = 0;
@@ -5849,6 +5959,43 @@ function updateGame(dt) {
     }
   }
 
+  // Ingredient Magnet timer
+  if (magnetTimer > 0) {
+    magnetTimer -= dt;
+    if (magnetTimer <= 0 && magnetTarget && cauldron.length < maxCauldronSlots) {
+      undoStack.push([...cauldron]);
+      cauldron.push(magnetTarget);
+      playSound('add_' + magnetTarget);
+      floatTexts.push({ x: CAULDRON_X+CAULDRON_W/2, y: CAULDRON_Y+20, text: 'MAGNET!', life: 0.6, color: '#ffdd44' });
+      magnetTarget = null;
+    }
+  }
+
+  // Recycled ingredient timer
+  if (recycledTimer > 0) recycledTimer -= dt;
+
+  // Overflow Vial: auto-serve stored potions when matching customer arrives
+  if (overflowVials.length > 0) {
+    for (let vi = overflowVials.length - 1; vi >= 0; vi--) {
+      const vial = overflowVials[vi];
+      const matchC = customers.find(c => c.ailment.id === vial.ailmentId && c.arrived && !c.served && !c.leaving && !c.dying && !c.reserved);
+      if (matchC) {
+        matchC.reserved = true;
+        deliveryQueue.push({
+          potionColor: vial.color,
+          ailmentId: vial.ailmentId,
+          customer: matchC,
+          isBoss: false,
+          matchData: { match: matchC.ailment, cauldronSnapshot: matchC.ailment.recipe, isAssistant: false, doubleDownActive: false },
+        });
+        floatTexts.push({ x: matchC.x+15, y: matchC.y-20, text: 'VIAL!', life: 1.0, color: '#aa88ff' });
+        playSound('brew_good');
+        overflowVials.splice(vi, 1);
+        break; // one per frame
+      }
+    }
+  }
+
   // Spawn
   spawnTimer -= dt;
   // Pause spawning while merchant is active
@@ -5876,13 +6023,13 @@ function updateGame(dt) {
       c.x += (c.targetX - c.x) * 3 * dt;
       if (Math.abs(c.x - c.targetX) < 2) { c.x = c.targetX; c.arrived = true; }
     } else if (c.served) {
-      const brewSpeedMult = 1 + (upgradeLevels.brew_speed || 0) * 0.3;
-      c.serveAnim -= dt * 1.5 * brewSpeedMult;
+      c.serveAnim -= dt * 1.5;
       if (c.serveAnim <= 0) c.leaving = true;
     } else if (!c.leaving && !c.dying) {
       if (patienceFreezeTimer <= 0) {
         let patienceDrainMult = c.personality === 'panicky' ? 1.5 : 1.0;
         if (c.behavior === 'sitter') patienceDrainMult *= 0.8; // Sitters drain 20% slower
+        if (rushModeActive) patienceDrainMult *= 2.0; // Rush Mode: customers drain 2x faster
         c.patience -= dt * patienceDrainMult;
       }
 

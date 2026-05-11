@@ -95,6 +95,44 @@ const LIVES_PER_WAVE = 3;
 let selectedDifficulty = 'normal';
 let diffConfig = DIFFICULTIES.normal;
 
+// === META-PROGRESSION (Prestige) ===
+const PRESTIGE_UNLOCKS = [
+  { id: 'start_gold',     name: 'Seed Money',       desc: 'Start each run with 25 gold',        cost: 3,  icon: '💰', perk: 'startGold' },
+  { id: 'extra_heart',    name: 'Tough Heart',       desc: '+1 starting life per wave',           cost: 5,  icon: '❤️', perk: 'extraHeart' },
+  { id: 'combo_extend',   name: 'Flow State',        desc: 'Combo timer +0.5s',                   cost: 4,  icon: '⚡', perk: 'comboExtend' },
+  { id: 'hat_wizard',     name: 'Wizard Hat',        desc: 'Cosmetic: wizard hat for brewer',     cost: 2,  icon: '🧙', perk: 'cosmetic' },
+  { id: 'hat_crown',      name: 'Golden Crown',      desc: 'Cosmetic: gold crown for brewer',     cost: 6,  icon: '👑', perk: 'cosmetic' },
+  { id: 'cauldron_gold',  name: 'Gilded Cauldron',   desc: 'Cosmetic: golden cauldron rim',       cost: 4,  icon: '✨', perk: 'cosmetic' },
+  { id: 'recipe_head',    name: 'Quick Study',       desc: 'Start with 1 random recipe discovered', cost: 3, icon: '📖', perk: 'recipeHead' },
+  { id: 'rep_boost',      name: 'Famous Brewer',     desc: 'Start at 1.2x reputation',            cost: 5,  icon: '⭐', perk: 'repBoost' },
+];
+function loadPrestige() { try { return JSON.parse(localStorage.getItem('potionPanic_prestige')) || { points: 0, totalEarned: 0, unlocked: {} }; } catch(e) { return { points: 0, totalEarned: 0, unlocked: {} }; } }
+function savePrestige() { try { localStorage.setItem('potionPanic_prestige', JSON.stringify(prestige)); } catch(e) {} }
+let prestige = loadPrestige();
+function calcPrestigeEarned(sc, w, diff) {
+  let pts = Math.floor(sc / 500) + Math.floor(w / 3);
+  if (diff === 'hard') pts = Math.floor(pts * 1.5);
+  if (diff === 'easy') pts = Math.floor(pts * 0.7);
+  // Challenge modifier bonus
+  let modMult = 1;
+  for (const cm of CHALLENGE_MODIFIERS) { if (activeChallengeMods[cm.id]) modMult += cm.scoreMult - 1; }
+  pts = Math.floor(pts * modMult);
+  return Math.max(1, pts);
+}
+function hasPrestigeUnlock(id) { return !!prestige.unlocked[id]; }
+
+// === CHALLENGE MODIFIERS ===
+const CHALLENGE_MODIFIERS = [
+  { id: 'no_undo',      name: 'No Undo',          desc: 'Undo button disabled',                icon: '🚫', scoreMult: 1.15 },
+  { id: 'one_life',     name: 'Iron Brewer',       desc: 'Only 1 life per wave',                icon: '💀', scoreMult: 1.30 },
+  { id: 'speed_demon',  name: 'Speed Demon',       desc: 'Customers arrive 40% faster',         icon: '⏩', scoreMult: 1.25 },
+  { id: 'fog',          name: 'Ingredient Fog',     desc: 'Ingredient names hidden',             icon: '🌫️', scoreMult: 1.20 },
+  { id: 'no_hints',     name: 'Blind Brewer',       desc: 'Auto-hint & Recipe Whisper disabled', icon: '🙈', scoreMult: 1.10 },
+];
+let activeChallengeMods = {}; // { modId: true/false }
+let titleScreen = 'main'; // 'main', 'prestige', 'challenge'
+let lastRunPrestige = 0; // points earned from last run
+
 // === GAME CONFIG ===
 const BASE_W = 800;
 const BASE_H = 600;
@@ -812,65 +850,4 @@ let discoveredRecipes = {};
 let cauldronDamaged = 0;
 let maxCauldronSlots = 4;
 let undoStack = [];
-let runStats = { totalServed:0, totalGold:0, maxCombo:0, maxWave:0, perfectWaves:0, rareServed:0, maxRep:1, waveLivesLost:0 };
-let perfectWaveFlash = 0; // celebration flash timer
-let recipeHighlight = null; // {id, timer} for highlighting correct recipe on bad brew
-let tutorialPage = 0; // current tutorial page
-let servePulse = { active: false, x: 0, y: 0, radius: 0, color: '#ffffff', life: 0 };
-
-// === MICRO-EVENT STATE (Task #56) ===
-let microEvent = null; // null or { type: 'merchant'|'inspector'|'ingredient_bonus', timer: float, data: {} }
-
-// === CAULDRON MOMENTUM STATE (Task #64) ===
-let perfectServeStreak = 0; // consecutive perfect serves (correct potion, not wild/apprentice)
-
-// === BREW QUEUE STATE ===
-let brewQueue = []; // [{potionColor, ailmentId, recipe, matchData}] max 2
-
-// === INGREDIENT COMBO STATE ===
-let lastBrewIngredients = []; // ingredients from last brew
-
-// === VIP & CUSTOMER PREVIEW STATE ===
-let vipSpawnedThisWave = false;
-let upcomingCustomers = []; // pre-generated ailments for wave preview
-
-// === TRAVELING MERCHANT STATE (Feature 1) ===
-let merchant = null; // { active, timer, option1, option2, chosen }
-let merchantCooldown = 0; // waves until next merchant can appear
-let merchantGoldMult = 1;
-let merchantGoldUses = 0;
-let merchantSpeedBoost = 1;
-let merchantSpeedTimer = 0;
-let comboShieldTimer = 0;
-let merchantExtraSlotActive = false;
-const MERCHANT_OFFERS = [
-  { id: 'extra_time', name: '+3s Patience', desc: 'All customers get +3s patience this wave', icon: '⏳', effect: 'patience_boost' },
-  { id: 'gold_rush', name: '2x Gold', desc: 'Double gold for next 3 serves', icon: '💰', effect: 'gold_mult', uses: 3 },
-  { id: 'speed_brew', name: 'Speed Brew', desc: 'Brewer walks 50% faster for 30s', icon: '⚡', effect: 'speed_boost', duration: 30 },
-  { id: 'bonus_slot', name: '+1 Cauldron', desc: 'Temporary extra cauldron slot this wave', icon: '🔥', effect: 'extra_slot' },
-  { id: 'heal', name: '+1 Life', desc: 'Restore one lost heart', icon: '❤️', effect: 'heal' },
-  { id: 'combo_keep', name: 'Combo Shield', desc: 'Combo won\'t reset for 20s', icon: '🛡️', effect: 'combo_shield', duration: 20 },
-];
-
-// === DOUBLE DOWN STATE (Feature 4) ===
-let doubleDown = false;
-const DOUBLE_DOWN_BTN = { x: 748, y: 435, w: 40, h: 40 };
-
-// === WAVE EVENT STATE (Feature 3) ===
-let mutationPending = null; // { customer, timer, warned }
-let linkedPairs = []; // [{ c1, c2, serveTimer, served1, served2 }]
-
-// === DELIVERY SYSTEM STATE ===
-let deliveryQueue = []; // Array of { potionColor, ailmentId, customer, matchData }
-let brewer = {
-  x: 400 + 100/2, // CAULDRON_X + CAULDRON_W/2 (constants not yet defined, will sync in startGame)
-  y: 300 + 20,     // COUNTER_Y + 20
-  homeX: 400 + 100/2,
-  state: 'idle', // 'idle', 'walking_to', 'delivering', 'walking_back'
-  target: null,
-  potion: null,
-  speed: 200,
-  deliverTimer: 0,
-  walkFrame: 0, // animation frame timer
-};
-let assistant
+let runS

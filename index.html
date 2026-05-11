@@ -1,2 +1,876 @@
 <!DOCTYPE html>
-<html><head><meta http-equiv="refresh" content="0;url=PotionPanic.html"><title>Potion Panic!</title></head><body><a href="PotionPanic.html">Play Potion Panic!</a></body></html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Potion Panic!</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#0a0606; overflow:hidden; display:flex; justify-content:center; align-items:center; height:100vh; font-family:monospace; }
+canvas { display:block; image-rendering:pixelated; cursor:pointer; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+// ============================================================
+// POTION PANIC! - A Potion Shop Tower Defense Game
+// v8 — Wave modifiers, customer tipping, 7 ingredients, boss system (waves 5/10/15/20),
+//       victory screen (wave 20), persistent high scores, environment themes per 5 waves
+// ============================================================
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+// === PALETTE ===
+const P = {
+  BG_DARK:    '#1a0e0a',
+  BG_MID:     '#2d1b0e',
+  BG_LIGHT:   '#4a3020',
+  COUNTER:    '#6b4226',
+  COUNTER_LT: '#8b6240',
+  STONE:      '#555566',
+  STONE_DK:   '#3a3a4a',
+  SKIN:       '#e8b88a',
+  SKIN2:      '#c69060',
+  CLOTH_BLUE: '#4466aa',
+  CLOTH_RED:  '#aa4444',
+  CLOTH_GREEN:'#44aa66',
+  CLOTH_PURPLE:'#8855aa',
+  ACCENT:     '#ffcc00',
+  DANGER:     '#cc3333',
+  SUCCESS:    '#66dd88',
+  POTION_GLO: '#88eebb',
+  PARCHMENT:  '#d4b896',
+  TEXT_DARK:   '#2a1a0e',
+  WHITE:      '#f0e6d6',
+  HERB_RED:   '#cc4444',
+  CRYS_BLUE:  '#4499dd',
+  FLOW_YELLOW:'#ddaa22',
+  MOSS_GREEN: '#44aa44',
+  MUSH_PURPLE:'#9955cc',
+  BUBBLE:     '#aaddcc',
+  HEART:      '#ee4455',
+  SHADOW:     'rgba(0,0,0,0.3)',
+  SKY_TOP:    '#0b1a2e',
+  SKY_BOT:    '#1a3050',
+  CLOUD:      '#223355',
+  STAR:       '#aabbdd',
+  FIRE_1:     '#ff6622',
+  FIRE_2:     '#ffaa11',
+  FIRE_3:     '#ffdd44',
+  EMBER:      '#ff4400',
+  LANTERN:    '#ffdd88',
+  SIGN_BG:    '#5a3a1e',
+  STORM_TOP:  '#0a0816',
+  STORM_BOT:  '#1a1030',
+  STORM_CLOUD:'#332244',
+  LIGHTNING:  '#ccbbff',
+  SHOP_BG:    '#1a1208',
+  SHOP_GOLD:  '#ffd700',
+  SHOP_PANEL: '#2d1f0e',
+  EXPLOSIVE: '#ff3300',
+  ACHIEVEMENT: '#ffee44',
+  RARE_GOLD: '#ffa500',
+  REP_HIGH: '#44ddaa',
+  REP_LOW: '#dd4444',
+  RUSH_RED: '#ff4466',
+  TIER2: '#5588cc',
+  TIER3: '#aa44cc',
+  TIER4: '#ff8800',
+  BONE_WHITE: '#ccbbaa',
+  EMBER_ORANGE: '#ff6633',
+  BOSS_HP: '#cc2222',
+  BOSS_BG: '#220a0a',
+  TIP_GOLD: '#ffdd55',
+};
+
+// === DIFFICULTY PRESETS ===
+const DIFFICULTIES = {
+  easy:   { label: 'Easy',   desc: 'Relaxed pace, forgiving patience',       color: P.SUCCESS,   patienceMult: 1.6, spawnMult: 1.5, waveCountMult: 0.7 },
+  normal: { label: 'Normal', desc: 'Balanced challenge for most brewers',     color: P.ACCENT,    patienceMult: 1.0, spawnMult: 1.0, waveCountMult: 1.0 },
+  hard:   { label: 'Hard',   desc: 'Fast customers, short fuses',            color: P.DANGER,    patienceMult: 0.6, spawnMult: 0.6, waveCountMult: 1.4 },
+};
+const LIVES_PER_WAVE = 3;
+let selectedDifficulty = 'normal';
+let diffConfig = DIFFICULTIES.normal;
+
+// === GAME CONFIG ===
+const BASE_W = 800;
+const BASE_H = 600;
+let scale = 1;
+let W = BASE_W, H = BASE_H;
+
+function resize() {
+  const sw = window.innerWidth, sh = window.innerHeight;
+  scale = Math.min(sw / BASE_W, sh / BASE_H);
+  W = BASE_W; H = BASE_H;
+  canvas.width = W; canvas.height = H;
+  canvas.style.width = (W * scale) + 'px';
+  canvas.style.height = (H * scale) + 'px';
+}
+resize();
+window.addEventListener('resize', resize);
+
+// === AUDIO ENGINE ===
+let audioCtx = null;
+let masterVol = 0.25;
+let sfxOn = true;
+let musicOn = true;
+let musicGain = null;
+let musicPlaying = false;
+
+function initAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    musicGain = audioCtx.createGain();
+    musicGain.gain.value = musicOn ? 0.04 : 0;
+    musicGain.connect(audioCtx.destination);
+  }
+}
+
+// Background ambient music — a slow, looping chord drone
+let ambientNodes = [];
+function startMusic() {
+  if (!audioCtx || musicPlaying) return;
+  musicPlaying = true;
+  const chords = [261.6, 329.6, 392.0, 523.3]; // C major spread
+  chords.forEach((freq, i) => {
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = i < 2 ? 'sine' : 'triangle';
+    o.frequency.value = freq * (i >= 2 ? 0.5 : 1);
+    // Slow LFO for movement
+    const lfo = audioCtx.createOscillator();
+    const lfoGain = audioCtx.createGain();
+    lfo.frequency.value = 0.15 + i * 0.05;
+    lfoGain.gain.value = 2 + i;
+    lfo.connect(lfoGain);
+    lfoGain.connect(o.frequency);
+    lfo.start();
+    g.gain.value = 0.15 - i * 0.02;
+    o.connect(g);
+    g.connect(musicGain);
+    o.start();
+    ambientNodes.push({ o, g, lfo, lfoGain });
+  });
+}
+
+function stopMusic() {
+  ambientNodes.forEach(n => { try { n.o.stop(); n.lfo.stop(); } catch(e){} });
+  ambientNodes = [];
+  musicPlaying = false;
+}
+
+function setMusicVolume(on) {
+  musicOn = on;
+  if (musicGain) musicGain.gain.value = on ? 0.04 : 0;
+}
+
+function playSound(type, param, panX) {
+  if (!audioCtx || !sfxOn) return;
+  const now = audioCtx.currentTime;
+  const master = audioCtx.createGain();
+  master.gain.value = masterVol;
+  // Spatial audio panning (Task #68)
+  if (panX !== undefined && typeof panX === 'number' && audioCtx.createStereoPanner) {
+    const panner = audioCtx.createStereoPanner();
+    panner.pan.value = Math.max(-1, Math.min(1, (panX / 400) - 1));
+    master.connect(panner);
+    panner.connect(audioCtx.destination);
+  } else {
+    master.connect(audioCtx.destination);
+  }
+
+  if (type === 'click') {
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'sine'; o.frequency.value = 600 + Math.random()*100;
+    g.gain.setValueAtTime(0.3,now); g.gain.linearRampToValueAtTime(0.001,now+0.08);
+    o.connect(g); g.connect(master); o.start(now); o.stop(now+0.08);
+  }
+  else if (type === 'hover') {
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'sine'; o.frequency.value = 500;
+    g.gain.setValueAtTime(0.08,now); g.gain.linearRampToValueAtTime(0.001,now+0.04);
+    o.connect(g); g.connect(master); o.start(now); o.stop(now+0.04);
+  }
+  else if (type === 'add' || type.startsWith('add_')) {
+    // Ingredient splash — two layered tones + noise burst
+    const o1 = audioCtx.createOscillator();
+    const o2 = audioCtx.createOscillator();
+    const g1 = audioCtx.createGain();
+    const g2 = audioCtx.createGain();
+    const ingPitches = { herb: 380, crystal: 700, flower: 550, mushroom: 260, root: 320, bone: 620, ember: 360 };
+    const ingId = type.length > 3 ? type.slice(4) : '';
+    const basePitch = ingPitches[ingId] || 350;
+    const pitch = basePitch + cauldron.length * 50 + Math.random()*20;
+    o1.type = 'sine'; o1.frequency.value = pitch;
+    o1.frequency.linearRampToValueAtTime(pitch * 1.8, now+0.12);
+    o2.type = 'triangle'; o2.frequency.value = pitch * 1.5;
+    o2.frequency.linearRampToValueAtTime(pitch * 0.8, now+0.15);
+    g1.gain.setValueAtTime(0.3,now); g1.gain.linearRampToValueAtTime(0.001,now+0.15);
+    g2.gain.setValueAtTime(0.15,now); g2.gain.linearRampToValueAtTime(0.001,now+0.12);
+    o1.connect(g1); g1.connect(master); o1.start(now); o1.stop(now+0.15);
+    o2.connect(g2); g2.connect(master); o2.start(now); o2.stop(now+0.15);
+    // Liquid splash noise
+    const buf = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.08, audioCtx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = (Math.random()*2-1) * Math.exp(-i/data.length*5);
+    const noise = audioCtx.createBufferSource();
+    noise.buffer = buf;
+    const nf = audioCtx.createBiquadFilter();
+    nf.type = 'bandpass'; nf.frequency.value = 2000; nf.Q.value = 1;
+    const ng = audioCtx.createGain();
+    ng.gain.setValueAtTime(0.15,now); ng.gain.linearRampToValueAtTime(0.001,now+0.08);
+    noise.connect(nf); nf.connect(ng); ng.connect(master); noise.start(now); noise.stop(now+0.08);
+  }
+  else if (type === 'brew_good') {
+    [0,0.08,0.16].forEach((t,i) => {
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.type = 'sine'; o.frequency.value = [523,659,784][i];
+      g.gain.setValueAtTime(0.3,now+t); g.gain.linearRampToValueAtTime(0.001,now+t+0.2);
+      o.connect(g); g.connect(master); o.start(now+t); o.stop(now+t+0.2);
+    });
+  }
+  else if (type === 'brew_bad') {
+    // Dissonant buzz + descending tone
+    const o1 = audioCtx.createOscillator();
+    const o2 = audioCtx.createOscillator();
+    const g1 = audioCtx.createGain();
+    const g2 = audioCtx.createGain();
+    o1.type = 'sawtooth'; o1.frequency.value = 200;
+    o1.frequency.linearRampToValueAtTime(90, now+0.35);
+    o2.type = 'square'; o2.frequency.value = 205;
+    o2.frequency.linearRampToValueAtTime(85, now+0.35);
+    g1.gain.setValueAtTime(0.2,now); g1.gain.linearRampToValueAtTime(0.001,now+0.35);
+    g2.gain.setValueAtTime(0.08,now); g2.gain.linearRampToValueAtTime(0.001,now+0.3);
+    o1.connect(g1); g1.connect(master); o1.start(now); o1.stop(now+0.35);
+    o2.connect(g2); g2.connect(master); o2.start(now); o2.stop(now+0.35);
+  }
+  else if (type === 'serve') {
+    // Triumphant arpeggio + shimmer
+    const comboPitch = 1 + (param || 0) * 0.08;
+    [0,0.06,0.12,0.18].forEach((t,i) => {
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.type = i < 3 ? 'sine' : 'triangle';
+      o.frequency.value = [523,659,784,1047][i] * comboPitch;
+      g.gain.setValueAtTime(0.25,now+t); g.gain.linearRampToValueAtTime(0.001,now+t+0.2);
+      o.connect(g); g.connect(master); o.start(now+t); o.stop(now+t+0.2);
+    });
+    // Shimmer overlay
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'sine'; o.frequency.value = 2093;
+    g.gain.setValueAtTime(0.05,now+0.2); g.gain.linearRampToValueAtTime(0.001,now+0.5);
+    o.connect(g); g.connect(master); o.start(now+0.2); o.stop(now+0.5);
+  }
+  else if (type === 'leave') {
+    // Sad descending + door thud
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'triangle'; o.frequency.value = 350;
+    o.frequency.linearRampToValueAtTime(120, now+0.5);
+    g.gain.setValueAtTime(0.2,now); g.gain.linearRampToValueAtTime(0.001,now+0.5);
+    o.connect(g); g.connect(master); o.start(now); o.stop(now+0.5);
+    // Thud
+    const o2 = audioCtx.createOscillator();
+    const g2 = audioCtx.createGain();
+    o2.type = 'sine'; o2.frequency.value = 60;
+    g2.gain.setValueAtTime(0.3,now+0.15); g2.gain.linearRampToValueAtTime(0.001,now+0.25);
+    o2.connect(g2); g2.connect(master); o2.start(now+0.15); o2.stop(now+0.25);
+  }
+  else if (type === 'doorbell') {
+    // Customer arrives — two-tone chime
+    [0, 0.12].forEach((t,i) => {
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.type = 'sine';
+      o.frequency.value = [880, 1100][i];
+      g.gain.setValueAtTime(0.12,now+t); g.gain.linearRampToValueAtTime(0.001,now+t+0.3);
+      o.connect(g); g.connect(master); o.start(now+t); o.stop(now+t+0.3);
+    });
+  }
+  else if (type === 'warning') {
+    // Low patience tick
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'square'; o.frequency.value = 440;
+    g.gain.setValueAtTime(0.08,now); g.gain.linearRampToValueAtTime(0.001,now+0.05);
+    o.connect(g); g.connect(master); o.start(now); o.stop(now+0.05);
+  }
+  else if (type === 'wave') {
+    [0,0.1,0.2,0.3,0.4].forEach((t,i) => {
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.type = 'sine'; o.frequency.value = [392,494,587,659,784][i];
+      g.gain.setValueAtTime(0.2,now+t); g.gain.linearRampToValueAtTime(0.001,now+t+0.25);
+      o.connect(g); g.connect(master); o.start(now+t); o.stop(now+t+0.25);
+    });
+  }
+  else if (type === 'gameover') {
+    [0,0.2,0.4,0.6].forEach((t,i) => {
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.type = 'triangle'; o.frequency.value = [392,350,330,262][i];
+      g.gain.setValueAtTime(0.2,now+t); g.gain.linearRampToValueAtTime(0.001,now+t+0.35);
+      o.connect(g); g.connect(master); o.start(now+t); o.stop(now+t+0.35);
+    });
+  }
+  else if (type === 'coin') {
+    const o = audioCtx.createOscillator();
+    const o2 = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    const g2 = audioCtx.createGain();
+    o.type = 'sine'; o.frequency.value = 1200 + Math.random()*200;
+    o2.type = 'sine'; o2.frequency.value = 1500 + Math.random()*200;
+    g.gain.setValueAtTime(0.12,now); g.gain.linearRampToValueAtTime(0.001,now+0.15);
+    g2.gain.setValueAtTime(0.08,now+0.05); g2.gain.linearRampToValueAtTime(0.001,now+0.12);
+    o.connect(g); g.connect(master); o.start(now); o.stop(now+0.15);
+    o2.connect(g2); g2.connect(master); o2.start(now+0.05); o2.stop(now+0.12);
+  }
+  else if (type === 'pause') {
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'sine'; o.frequency.value = 660;
+    o.frequency.linearRampToValueAtTime(440, now+0.15);
+    g.gain.setValueAtTime(0.15,now); g.gain.linearRampToValueAtTime(0.001,now+0.15);
+    o.connect(g); g.connect(master); o.start(now); o.stop(now+0.15);
+  }
+  else if (type === 'unpause') {
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'sine'; o.frequency.value = 440;
+    o.frequency.linearRampToValueAtTime(660, now+0.15);
+    g.gain.setValueAtTime(0.15,now); g.gain.linearRampToValueAtTime(0.001,now+0.15);
+    o.connect(g); g.connect(master); o.start(now); o.stop(now+0.15);
+  }
+  else if (type === 'shop_buy') {
+    // Ka-ching! purchase sound
+    [0,0.06,0.12].forEach((t,i) => {
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.type = 'sine'; o.frequency.value = [800,1200,1600][i];
+      g.gain.setValueAtTime(0.2,now+t); g.gain.linearRampToValueAtTime(0.001,now+t+0.15);
+      o.connect(g); g.connect(master); o.start(now+t); o.stop(now+t+0.15);
+    });
+  }
+  else if (type === 'shop_deny') {
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'square'; o.frequency.value = 200;
+    g.gain.setValueAtTime(0.1,now); g.gain.linearRampToValueAtTime(0.001,now+0.15);
+    o.connect(g); g.connect(master); o.start(now); o.stop(now+0.15);
+  }
+  else if (type === 'shop_open') {
+    // Warm chime ascending
+    [0,0.08,0.16,0.24].forEach((t,i) => {
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.type = 'triangle'; o.frequency.value = [330,440,550,660][i];
+      g.gain.setValueAtTime(0.15,now+t); g.gain.linearRampToValueAtTime(0.001,now+t+0.25);
+      o.connect(g); g.connect(master); o.start(now+t); o.stop(now+t+0.25);
+    });
+  }
+  else if (type === 'explosion') {
+    const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+    o.type = 'sawtooth'; o.frequency.value = 120;
+    g.gain.setValueAtTime(0.35,now); g.gain.exponentialRampToValueAtTime(0.001,now+0.4);
+    o.connect(g); g.connect(master); o.start(now); o.stop(now+0.4);
+    const o2 = audioCtx.createOscillator(); const g2 = audioCtx.createGain();
+    o2.type = 'square'; o2.frequency.value = 60;
+    g2.gain.setValueAtTime(0.25,now); g2.gain.exponentialRampToValueAtTime(0.001,now+0.5);
+    o2.connect(g2); g2.connect(master); o2.start(now); o2.stop(now+0.5);
+  }
+  else if (type === 'rare_ding') {
+    const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+    o.type = 'sine'; o.frequency.setValueAtTime(880,now);
+    o.frequency.setValueAtTime(1100,now+0.1);
+    g.gain.setValueAtTime(0.15,now); g.gain.exponentialRampToValueAtTime(0.001,now+0.4);
+    o.connect(g); g.connect(master); o.start(now); o.stop(now+0.4);
+  }
+  else if (type === 'undo') {
+    const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+    o.type = 'sine'; o.frequency.setValueAtTime(500,now);
+    o.frequency.linearRampToValueAtTime(350,now+0.1);
+    g.gain.setValueAtTime(0.12,now); g.gain.exponentialRampToValueAtTime(0.001,now+0.15);
+    o.connect(g); g.connect(master); o.start(now); o.stop(now+0.15);
+  }
+  else if (type === 'rush') {
+    [0,0.08,0.16].forEach((t,i) => {
+      const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+      o.type = 'square'; o.frequency.value = [200,400,600][i];
+      g.gain.setValueAtTime(0.15,now+t); g.gain.exponentialRampToValueAtTime(0.001,now+t+0.15);
+      o.connect(g); g.connect(master); o.start(now+t); o.stop(now+t+0.15);
+    });
+  }
+  else if (type === 'transition') {
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'sine'; o.frequency.value = 300;
+    o.frequency.linearRampToValueAtTime(600, now+0.3);
+    g.gain.setValueAtTime(0.08,now); g.gain.linearRampToValueAtTime(0.001,now+0.3);
+    o.connect(g); g.connect(master); o.start(now); o.stop(now+0.3);
+  }
+  else if (type === 'boss_appear') {
+    // Deep rumble + horn
+    [0,0.1,0.2].forEach((t,i) => {
+      const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+      o.type = i===2?'sawtooth':'square'; o.frequency.value = [60,80,120][i];
+      g.gain.setValueAtTime(0.2,now+t); g.gain.exponentialRampToValueAtTime(0.001,now+t+0.4);
+      o.connect(g); g.connect(master); o.start(now+t); o.stop(now+t+0.4);
+    });
+  }
+  else if (type === 'boss_hit') {
+    const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+    o.type = 'sawtooth'; o.frequency.value = 150;
+    o.frequency.linearRampToValueAtTime(80, now+0.2);
+    g.gain.setValueAtTime(0.2,now); g.gain.exponentialRampToValueAtTime(0.001,now+0.3);
+    o.connect(g); g.connect(master); o.start(now); o.stop(now+0.3);
+  }
+  else if (type === 'boss_defeat') {
+    [0,0.1,0.2,0.3,0.4].forEach((t,i) => {
+      const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+      o.type = 'sine'; o.frequency.value = [200,300,400,500,800][i];
+      g.gain.setValueAtTime(0.15,now+t); g.gain.exponentialRampToValueAtTime(0.001,now+t+0.3);
+      o.connect(g); g.connect(master); o.start(now+t); o.stop(now+t+0.3);
+    });
+  }
+  else if (type === 'boss_scorch') {
+    const o = audioCtx.createOscillator(); const n = audioCtx.createOscillator();
+    const g = audioCtx.createGain(); const g2 = audioCtx.createGain();
+    o.type = 'sawtooth'; o.frequency.value = 100; o.frequency.linearRampToValueAtTime(300,now+0.3);
+    g.gain.setValueAtTime(0.18,now); g.gain.exponentialRampToValueAtTime(0.001,now+0.5);
+    n.type = 'square'; n.frequency.value = 40;
+    g2.gain.setValueAtTime(0.1,now); g2.gain.exponentialRampToValueAtTime(0.001,now+0.3);
+    o.connect(g); g.connect(master); n.connect(g2); g2.connect(master);
+    o.start(now); o.stop(now+0.5); n.start(now); n.stop(now+0.3);
+  }
+  else if (type === 'victory') {
+    [0,0.12,0.24,0.36,0.48,0.6].forEach((t,i) => {
+      const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+      o.type = 'sine'; o.frequency.value = [262,330,392,523,659,784][i];
+      g.gain.setValueAtTime(0.15,now+t); g.gain.exponentialRampToValueAtTime(0.001,now+t+0.5);
+      o.connect(g); g.connect(master); o.start(now+t); o.stop(now+t+0.5);
+    });
+  }
+  else if (type === 'tip') {
+    const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+    o.type = 'sine'; o.frequency.setValueAtTime(600,now); o.frequency.setValueAtTime(900,now+0.08);
+    g.gain.setValueAtTime(0.1,now); g.gain.exponentialRampToValueAtTime(0.001,now+0.2);
+    o.connect(g); g.connect(master); o.start(now); o.stop(now+0.2);
+  }
+  else if (type === 'almost') {
+    // Close but not quite — descending two-note
+    [0, 0.12].forEach((t,i) => {
+      const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+      o.type = 'triangle'; o.frequency.value = [500, 380][i];
+      g.gain.setValueAtTime(0.2,now+t); g.gain.linearRampToValueAtTime(0.001,now+t+0.2);
+      o.connect(g); g.connect(master); o.start(now+t); o.stop(now+t+0.2);
+    });
+  }
+  else if (type === 'vip_fanfare') {
+    // Ascending arpeggio C-E-G-C (523-659-784-1047)
+    [0, 0.08, 0.16, 0.24].forEach((t,i) => {
+      const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+      o.type = i < 3 ? 'triangle' : 'sine';
+      o.frequency.value = [523, 659, 784, 1047][i];
+      g.gain.setValueAtTime(0.25, now+t); g.gain.linearRampToValueAtTime(0.001, now+t+0.3);
+      o.connect(g); g.connect(master); o.start(now+t); o.stop(now+t+0.3);
+    });
+    // Shimmer overlay for VIP
+    const sh = audioCtx.createOscillator(); const sg = audioCtx.createGain();
+    sh.type = 'sine'; sh.frequency.value = 2093;
+    sg.gain.setValueAtTime(0.06, now+0.3); sg.gain.linearRampToValueAtTime(0.001, now+0.7);
+    sh.connect(sg); sg.connect(master); sh.start(now+0.3); sh.stop(now+0.7);
+  }
+  else if (type === 'merchant_arrive') {
+    // Wind chime — high sine arpeggio descending
+    [0, 0.1, 0.2, 0.3].forEach((t,i) => {
+      const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+      o.type = 'sine'; o.frequency.value = [1200, 1000, 800, 1400][i];
+      g.gain.setValueAtTime(0.12, now+t); g.gain.linearRampToValueAtTime(0.001, now+t+0.4);
+      o.connect(g); g.connect(master); o.start(now+t); o.stop(now+t+0.4);
+    });
+  }
+  else if (type === 'merchant_choose') {
+    // Sparkle confirmation
+    [0, 0.06, 0.12].forEach((t,i) => {
+      const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+      o.type = 'sine'; o.frequency.value = [800, 1000, 1200][i];
+      g.gain.setValueAtTime(0.15, now+t); g.gain.linearRampToValueAtTime(0.001, now+t+0.25);
+      o.connect(g); g.connect(master); o.start(now+t); o.stop(now+t+0.25);
+    });
+  }
+  else if (type === 'mutation') {
+    // Eerie wobble
+    const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+    o.type = 'sawtooth'; o.frequency.value = 200;
+    o.frequency.linearRampToValueAtTime(400, now+0.15);
+    o.frequency.linearRampToValueAtTime(150, now+0.3);
+    g.gain.setValueAtTime(0.15, now); g.gain.linearRampToValueAtTime(0.001, now+0.4);
+    o.connect(g); g.connect(master); o.start(now); o.stop(now+0.4);
+  }
+  else if (type === 'linked_spawn') {
+    // Chain clink — two metallic hits
+    [0, 0.08].forEach((t,i) => {
+      const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+      o.type = 'triangle'; o.frequency.value = [900, 1100][i];
+      g.gain.setValueAtTime(0.12, now+t); g.gain.linearRampToValueAtTime(0.001, now+t+0.15);
+      o.connect(g); g.connect(master); o.start(now+t); o.stop(now+t+0.15);
+    });
+  }
+  else if (type === 'bad_bet') {
+    // Punishing low rumble + high screech
+    const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+    o.type = 'sawtooth'; o.frequency.value = 80;
+    g.gain.setValueAtTime(0.2, now); g.gain.linearRampToValueAtTime(0.001, now+0.4);
+    o.connect(g); g.connect(master); o.start(now); o.stop(now+0.4);
+    const o2 = audioCtx.createOscillator(); const g2 = audioCtx.createGain();
+    o2.type = 'square'; o2.frequency.value = 300;
+    o2.frequency.linearRampToValueAtTime(100, now+0.3);
+    g2.gain.setValueAtTime(0.1, now); g2.gain.linearRampToValueAtTime(0.001, now+0.3);
+    o2.connect(g2); g2.connect(master); o2.start(now); o2.stop(now+0.3);
+  }
+  else if (type === 'smoke_ring') {
+    // Soft poof — breathy noise burst
+    const buf = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.15, audioCtx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = (Math.random()*2-1) * Math.exp(-i/data.length*4);
+    const noise = audioCtx.createBufferSource(); noise.buffer = buf;
+    const nf = audioCtx.createBiquadFilter(); nf.type = 'bandpass'; nf.frequency.value = 800; nf.Q.value = 2;
+    const ng = audioCtx.createGain(); ng.gain.setValueAtTime(0.08,now); ng.gain.linearRampToValueAtTime(0.001,now+0.15);
+    noise.connect(nf); nf.connect(ng); ng.connect(master); noise.start(now); noise.stop(now+0.15);
+  }
+  else if (type === 'coin_cascade') {
+    // Quick metallic chime cascade
+    [0,0.04,0.08,0.12].forEach((t,i) => {
+      const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+      o.type = 'sine'; o.frequency.value = 1200 + i*200 + Math.random()*100;
+      g.gain.setValueAtTime(0.06,now+t); g.gain.linearRampToValueAtTime(0.001,now+t+0.1);
+      o.connect(g); g.connect(master); o.start(now+t); o.stop(now+t+0.1);
+    });
+  }
+  else if (type === 'near_miss') {
+    // Dramatic whoosh
+    const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+    o.type = 'sine'; o.frequency.value = 400;
+    o.frequency.linearRampToValueAtTime(900, now+0.15);
+    o.frequency.linearRampToValueAtTime(400, now+0.3);
+    g.gain.setValueAtTime(0.12,now); g.gain.linearRampToValueAtTime(0.001,now+0.3);
+    o.connect(g); g.connect(master); o.start(now); o.stop(now+0.3);
+  }
+  else if (type === 'recipe_discover') {
+    // Magical ascending chime with shimmer
+    [0,0.1,0.2,0.3,0.4].forEach((t,i) => {
+      const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+      o.type = i < 3 ? 'sine' : 'triangle';
+      o.frequency.value = [523,659,784,1047,1318][i];
+      g.gain.setValueAtTime(0.15,now+t); g.gain.linearRampToValueAtTime(0.001,now+t+0.4);
+      o.connect(g); g.connect(master); o.start(now+t); o.stop(now+t+0.4);
+    });
+  }
+  else if (type === 'thunder') {
+    // Deep rumble
+    const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+    o.type = 'sawtooth'; o.frequency.value = 40;
+    o.frequency.linearRampToValueAtTime(25, now+0.6);
+    g.gain.setValueAtTime(0.15,now); g.gain.linearRampToValueAtTime(0.001,now+0.8);
+    o.connect(g); g.connect(master); o.start(now); o.stop(now+0.8);
+    // Crack
+    const buf = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.1, audioCtx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = (Math.random()*2-1) * Math.exp(-i/data.length*3);
+    const noise = audioCtx.createBufferSource(); noise.buffer = buf;
+    const ng = audioCtx.createGain(); ng.gain.setValueAtTime(0.1,now); ng.gain.linearRampToValueAtTime(0.001,now+0.15);
+    noise.connect(ng); ng.connect(master); noise.start(now); noise.stop(now+0.15);
+  }
+}
+
+// === AMBIENT SOUND ===
+let ambientSource = null;
+let ambientGain = null;
+function updateAmbientSound() {
+  if (!audioCtx || !sfxOn) return;
+  const env = getEnvTheme();
+  if (ambientSource) { try { ambientSource.stop(); } catch(e){} }
+  const dur = 2;
+  const buf = audioCtx.createBuffer(1, audioCtx.sampleRate * dur, audioCtx.sampleRate);
+  const data = buf.getChannelData(0);
+  const envFreqs = {
+    'Forest Hut': { base: 200, high: 3000, vol: 0.02 },
+    'Mountain Pass': { base: 80, high: 800, vol: 0.03 },
+    'Dark Cavern': { base: 60, high: 400, vol: 0.02 },
+    "Dragon's Lair": { base: 100, high: 2000, vol: 0.025 },
+  };
+  const cfg = envFreqs[env.name] || envFreqs['Forest Hut'];
+  for (let i = 0; i < data.length; i++) {
+    data[i] = (Math.random() * 2 - 1) * 0.5;
+  }
+  ambientSource = audioCtx.createBufferSource();
+  ambientSource.buffer = buf; ambientSource.loop = true;
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = 'bandpass'; filter.frequency.value = cfg.base; filter.Q.value = 0.5;
+  ambientGain = audioCtx.createGain();
+  ambientGain.gain.value = cfg.vol * masterVol;
+  ambientSource.connect(filter); filter.connect(ambientGain); ambientGain.connect(audioCtx.destination);
+  ambientSource.start();
+}
+
+// === ADAPTIVE MUSIC LAYERS (Task #67) ===
+function startMusicLayer(layerName) {
+  if (!audioCtx || !musicOn) return;
+  if (musicLayers[layerName] && musicLayers[layerName].active) return;
+  const now = audioCtx.currentTime;
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime(0.001, now);
+  g.gain.linearRampToValueAtTime(0.03, now + 0.5);
+  g.connect(audioCtx.destination);
+  let nodes = [];
+
+  if (layerName === 'tension') {
+    // Pulsing low bass note
+    const o = audioCtx.createOscillator();
+    o.type = 'sine'; o.frequency.value = 55;
+    const lfo = audioCtx.createOscillator();
+    const lfoGain = audioCtx.createGain();
+    lfo.frequency.value = 2; lfoGain.gain.value = 0.02;
+    lfo.connect(lfoGain); lfoGain.connect(g.gain);
+    o.connect(g); lfo.start(); o.start();
+    nodes = [o, lfo];
+  } else if (layerName === 'rush') {
+    // Fast rhythmic noise bursts (hi-hat style)
+    const buf = audioCtx.createBuffer(1, audioCtx.sampleRate * 2, audioCtx.sampleRate);
+    const data = buf.getChannelData(0);
+    const rate = audioCtx.sampleRate;
+    for (let i = 0; i < data.length; i++) {
+      const beatPos = (i % Math.floor(rate * 0.15)); // 150ms cycle
+      data[i] = beatPos < rate * 0.02 ? (Math.random() * 2 - 1) * 0.6 : 0;
+    }
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf; src.loop = true;
+    const filt = audioCtx.createBiquadFilter();
+    filt.type = 'highpass'; filt.frequency.value = 6000;
+    src.connect(filt); filt.connect(g); src.start();
+    nodes = [src];
+  } else if (layerName === 'boss') {
+    // Dramatic low strings (sawtooth)
+    const o1 = audioCtx.createOscillator();
+    const o2 = audioCtx.createOscillator();
+    o1.type = 'sawtooth'; o1.frequency.value = 65;
+    o2.type = 'sawtooth'; o2.frequency.value = 98;
+    const filt = audioCtx.createBiquadFilter();
+    filt.type = 'lowpass'; filt.frequency.value = 300;
+    o1.connect(filt); o2.connect(filt); filt.connect(g);
+    o1.start(); o2.start();
+    nodes = [o1, o2];
+  }
+  musicLayers[layerName] = { nodes, gain: g, active: true };
+}
+
+function stopMusicLayer(layerName) {
+  const layer = musicLayers[layerName];
+  if (!layer || !layer.active) return;
+  if (audioCtx) {
+    const now = audioCtx.currentTime;
+    layer.gain.gain.linearRampToValueAtTime(0.001, now + 0.5);
+    setTimeout(() => {
+      layer.nodes.forEach(n => { try { n.stop(); } catch(e){} });
+      try { layer.gain.disconnect(); } catch(e){}
+    }, 600);
+  }
+  musicLayers[layerName] = null;
+}
+
+function stopMusicLayers() {
+  ['tension', 'rush', 'boss'].forEach(l => stopMusicLayer(l));
+}
+
+function updateMusicLayers() {
+  if (!audioCtx || !musicOn || state !== 'playing') {
+    stopMusicLayers();
+    return;
+  }
+  // Tension: any customer patience < 30%
+  const hasTension = customers.some(c => c.arrived && !c.served && !c.leaving && (c.patience / c.maxPatience) < 0.3);
+  if (hasTension) startMusicLayer('tension'); else stopMusicLayer('tension');
+
+  // Rush: 3+ customers waiting
+  const waitingCount = customers.filter(c => c.arrived && !c.served && !c.leaving).length;
+  if (waitingCount >= 3) startMusicLayer('rush'); else stopMusicLayer('rush');
+
+  // Boss: during boss fights
+  if (bossActive && boss && !boss.defeated) startMusicLayer('boss'); else stopMusicLayer('boss');
+}
+
+// === INGREDIENTS ===
+const INGREDIENTS = [
+  { id: 'herb',    name: 'Red Herb',       color: P.HERB_RED,    symbol: 'H' },
+  { id: 'crystal', name: 'Blue Crystal',   color: P.CRYS_BLUE,   symbol: 'C' },
+  { id: 'flower',  name: 'Yellow Flower',  color: P.FLOW_YELLOW,  symbol: 'F' },
+  { id: 'moss',    name: 'Green Moss',     color: P.MOSS_GREEN,   symbol: 'M' },
+  { id: 'mushroom',name: 'Purple Mushroom', color: P.MUSH_PURPLE, symbol: 'U' },
+  { id: 'bone',    name: 'White Bone',      color: '#ccbbaa',     symbol: 'B', wave: 8 },
+  { id: 'ember',   name: 'Fire Ember',      color: '#ff6633',     symbol: 'E', wave: 14 },
+];
+
+// === AILMENTS & RECIPES ===
+const AILMENTS = [
+  // Tier 1: Healing (unordered)
+  { id: 'headache',  name: 'Headache',      color: P.DANGER,      icon: '!', recipe: ['herb','crystal'],          wave: 1, tier: 1, anim: 'throb' },
+  { id: 'nausea',    name: 'Nausea',        color: P.MOSS_GREEN,  icon: '~', recipe: ['moss','flower'],           wave: 1, tier: 1, anim: 'wobble' },
+  { id: 'fatigue',   name: 'Fatigue',       color: P.CRYS_BLUE,   icon: 'z', recipe: ['crystal','flower'],        wave: 2, tier: 1, anim: 'droop' },
+  { id: 'fever',     name: 'Fever',         color: '#ee8833',     icon: '*', recipe: ['herb','moss'],             wave: 3, tier: 1, anim: 'glow' },
+  { id: 'rash',      name: 'Rash',          color: P.MUSH_PURPLE, icon: '#', recipe: ['flower','mushroom'],       wave: 4, tier: 1, anim: 'spark' },
+  // Tier 2: Remedies (unordered, 3-ingredient)
+  { id: 'curse',     name: 'Curse',         color: '#8833aa',     icon: 'X', recipe: ['herb','crystal','moss'],   wave: 5, tier: 2, anim: 'spark' },
+  { id: 'weakness',  name: 'Weakness',      color: P.TIER2,       icon: 'W', recipe: ['crystal','moss','flower'], wave: 6, tier: 2, anim: 'droop' },
+  { id: 'plague',    name: 'Plague',         color: '#338833',     icon: '%', recipe: ['moss','mushroom','herb'],  wave: 7, tier: 2, anim: 'wobble' },
+  { id: 'insomnia',  name: 'Insomnia',      color: '#6666aa',     icon: 'Z', recipe: ['mushroom','crystal','flower'], wave: 8, tier: 2, anim: 'droop' },
+  // Tier 3: Curses (ORDERED recipes)
+  { id: 'petrify',   name: 'Petrification', color: P.TIER3,       icon: 'P', recipe: ['crystal','mushroom','herb'], wave: 10, tier: 3, anim: 'glow', ordered: true },
+  { id: 'madness',   name: 'Madness',       color: '#cc33cc',     icon: 'M', recipe: ['mushroom','flower','crystal'], wave: 12, tier: 3, anim: 'throb', ordered: true },
+  // Tier 4: Legendary (ORDERED, rare)
+  { id: 'phoenix',   name: 'Phoenix Tears', color: P.TIER4,       icon: 'V', recipe: ['herb','flower','moss','crystal'], wave: 15, tier: 4, anim: 'glow', ordered: true },
+  { id: 'voidbrew',  name: 'Void Essence',  color: '#6622cc',     icon: 'Q', recipe: ['mushroom','crystal','moss','herb'], wave: 18, tier: 4, anim: 'spark', ordered: true },
+  // Bone recipes (unlocked wave 8+)
+  { id: 'fracture',  name: 'Fracture',      color: '#998877',     icon: 'F', recipe: ['bone','herb'],               wave: 8, tier: 1, anim: 'throb' },
+  { id: 'haunting',  name: 'Haunting',      color: '#7766aa',     icon: 'G', recipe: ['bone','mushroom','crystal'],  wave: 9, tier: 2, anim: 'wobble' },
+  { id: 'bonechill', name: 'Bone Chill',    color: '#99bbdd',     icon: 'B', recipe: ['bone','crystal','moss'],      wave: 11, tier: 2, anim: 'glow' },
+  // Ember recipes (unlocked wave 14+)
+  { id: 'burnwound', name: 'Burn Wound',    color: '#ee6644',     icon: 'R', recipe: ['ember','moss'],              wave: 14, tier: 1, anim: 'glow' },
+  { id: 'hellfire',  name: 'Hellfire',      color: '#ff4422',     icon: 'D', recipe: ['ember','bone','mushroom'],    wave: 15, tier: 2, anim: 'spark' },
+  { id: 'soulfire',  name: 'Soulfire',      color: '#ffaa22',     icon: 'S', recipe: ['ember','bone','crystal','flower'], wave: 17, tier: 3, anim: 'glow', ordered: true },
+  // Late-wave 3-ingredient recipes (wave 10+)
+  { id: 'frostburn', name: 'Frostburn',     color: '#6ab4cc',     icon: 'I', recipe: ['crystal','ember','flower'],     wave: 16, tier: 2, anim: 'glow' },
+  { id: 'rotblight', name: 'Rot Blight',    color: '#4a6a2a',     icon: 'T', recipe: ['mushroom','moss','bone'],       wave: 13, tier: 2, anim: 'wobble' },
+  { id: 'ashveil',   name: 'Ash Veil',      color: '#7a7a6a',     icon: 'A', recipe: ['ember','herb','mushroom'],      wave: 16, tier: 2, anim: 'droop' },
+  { id: 'delirium',  name: 'Delirium',      color: '#aa33aa',     icon: 'L', recipe: ['mushroom','flower','bone'],     wave: 13, tier: 2, anim: 'wobble' },
+];
+const POTION_TIERS = { 1: {name:'Healing',color:P.SUCCESS}, 2: {name:'Remedies',color:P.TIER2}, 3: {name:'Curses',color:P.TIER3}, 4: {name:'Legendary',color:P.TIER4} };
+
+// === INGREDIENT COMBO BONUSES ===
+const INGREDIENT_COMBOS = [
+  { pair: ['herb', 'crystal'], name: 'Clarity Blend', goldBonus: 0.15 },
+  { pair: ['flower', 'moss'], name: 'Nature\'s Touch', goldBonus: 0.15 },
+  { pair: ['mushroom', 'bone'], name: 'Dark Synergy', goldBonus: 0.20 },
+  { pair: ['ember', 'crystal'], name: 'Fire Crystal', goldBonus: 0.20 },
+  { pair: ['herb', 'flower'], name: 'Garden Mix', goldBonus: 0.10 },
+  { pair: ['bone', 'ember'], name: 'Hellfire Brew', goldBonus: 0.25 },
+];
+
+// === CUSTOMER APPEARANCE VARIANTS ===
+const CUSTOMER_LOOKS = [
+  { cloth: P.CLOTH_BLUE, skin: P.SKIN, hair: P.TEXT_DARK, bodyType: 0, hat: null },
+  { cloth: P.CLOTH_RED, skin: P.SKIN2, hair: '#553322', bodyType: 1, hat: 'wizard' },
+  { cloth: P.CLOTH_GREEN, skin: P.SKIN, hair: '#886633', bodyType: 2, hat: null },
+  { cloth: P.CLOTH_PURPLE, skin: P.SKIN2, hair: P.TEXT_DARK, bodyType: 0, hat: 'hood' },
+  { cloth: '#cc8844', skin: P.SKIN, hair: '#332211', bodyType: 1, hat: 'bandana' },
+  { cloth: '#4488aa', skin: P.SKIN2, hair: '#664422', bodyType: 2, hat: 'wizard' },
+  { cloth: '#aa6655', skin: P.SKIN, hair: '#221100', bodyType: 0, hat: 'hood' },
+  { cloth: '#6688aa', skin: P.SKIN2, hair: '#443311', bodyType: 1, hat: null },
+];
+
+// === GAME STATE ===
+let state = 'title'; // title, playing, paused, gameover, waveIntro, shop, tutorial, victory
+let score = 0;
+let gold = 0;
+let lives = LIVES_PER_WAVE;
+let wave = 0;
+let waveTimer = 0;
+let waveCustomersLeft = 0;
+let spawnTimer = 0;
+let customers = [];
+let cauldron = [];
+let particles = [];
+let floatTexts = [];
+let bubbles = [];
+let shakeTimer = 0;
+let shakeIntensity = 0;
+let waveIntroTimer = 0;
+let newRecipeShown = null;
+let comboCount = 0;
+let comboTimer = 0;
+let highScores = loadHighScores();
+let brewFlash = 0;
+let bossDeathRing = { active: false, x: 0, y: 0, radius: 0, maxRadius: 300, life: 0, color: '#ffaa00' };
+let cauldronBubbleTimer = 0;
+let hoverBtn = null;
+let prevHoverBtn = null;
+let titlePulse = 0;
+let warningCooldowns = {}; // per-customer warning sound cooldown
+let pauseAnim = 0; // animation timer for pause overlay
+
+// v6 state
+let reputation = 1.0;
+let isRushHour = false;
+let rushHourBonusMult = 1.0;
+let discoveredRecipes = {};
+let cauldronDamaged = 0;
+let maxCauldronSlots = 4;
+let undoStack = [];
+let runStats = { totalServed:0, totalGold:0, maxCombo:0, maxWave:0, perfectWaves:0, rareServed:0, maxRep:1, waveLivesLost:0 };
+let perfectWaveFlash = 0; // celebration flash timer
+let recipeHighlight = null; // {id, timer} for highlighting correct recipe on bad brew
+let tutorialPage = 0; // current tutorial page
+let servePulse = { active: false, x: 0, y: 0, radius: 0, color: '#ffffff', life: 0 };
+
+// === MICRO-EVENT STATE (Task #56) ===
+let microEvent = null; // null or { type: 'merchant'|'inspector'|'ingredient_bonus', timer: float, data: {} }
+
+// === CAULDRON MOMENTUM STATE (Task #64) ===
+let perfectServeStreak = 0; // consecutive perfect serves (correct potion, not wild/apprentice)
+
+// === BREW QUEUE STATE ===
+let brewQueue = []; // [{potionColor, ailmentId, recipe, matchData}] max 2
+
+// === INGREDIENT COMBO STATE ===
+let lastBrewIngredients = []; // ingredients from last brew
+
+// === VIP & CUSTOMER PREVIEW STATE ===
+let vipSpawnedThisWave = false;
+let upcomingCustomers = []; // pre-generated ailments for wave preview
+
+// === TRAVELING MERCHANT STATE (Feature 1) ===
+let merchant = null; // { active, timer, option1, option2, chosen }
+let merchantCooldown = 0; // waves until next merchant can appear
+let merchantGoldMult = 1;
+let merchantGoldUses = 0;
+let merchantSpeedBoost = 1;
+let merchantSpeedTimer = 0;
+let comboShieldTimer = 0;
+let merchantExtraSlotActive = false;
+const MERCHANT_OFFERS = [
+  { id: 'extra_time', name: '+3s Patience', desc: 'All customers get +3s patience this wave', icon: '⏳', effect: 'patience_boost' },
+  { id: 'gold_rush', name: '2x Gold', desc: 'Double gold for next 3 serves', icon: '💰', effect: 'gold_mult', uses: 3 },
+  { id: 'speed_brew', name: 'Speed Brew', desc: 'Brewer walks 50% faster for 30s', icon: '⚡', effect: 'speed_boost', duration: 30 },
+  { id: 'bonus_slot', name: '+1 Cauldron', desc: 'Temporary extra cauldron slot this wave', icon: '🔥', effect: 'extra_slot' },
+  { id: 'heal', name: '+1 Life', desc: 'Restore one lost heart', icon: '❤️', effect: 'heal' },
+  { id: 'combo_keep', name: 'Combo Shield', desc: 'Combo won\'t reset for 20s', icon: '🛡️', effect: 'combo_shield', duration: 20 },
+];
+
+// === DOUBLE DOWN STATE (Feature 4) ===
+let doubleDown = false;
+const DOUBLE_DOWN_BTN = { x: 748, y: 435, w: 40, h: 40 };
+
+// === WAVE EVENT STATE (Feature 3) ===
+let mutationPending = null; // { customer, timer, warned }
+let linkedPairs = []; // [{ c1, c2, serveTimer, served1, served2 }]
+
+// === DELIVERY SYSTEM STATE ===
+let deliveryQueue = []; // Array of { potionColor, ailmentId, customer, matchData }
+let brewer = {
+  x: 400 + 100/2, // CAULDRON_X + CAULDRON_W/2 (constants not yet defined, will sync in startGame)
+  y: 300 + 20,     // COUNTER_Y + 20
+  homeX: 400 + 100/2,
+  state: 'idle', // 'idle', 'walking_to', 'delivering', 'walking_back'
+  target: null,
+  potion: null,
+  speed: 200,
+  deliverTimer: 0,
+  walkFrame: 0, // animation frame timer
+};
+let assistant
